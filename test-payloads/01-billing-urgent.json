@@ -1,0 +1,16 @@
+{
+  "customer_id": "CUST-8021",
+  "customer_name": "Sarah Jenkins",
+  "email": "sarah.jenkins@acmeenterprise.io",
+  "channel": "web_portal",
+  "subject": "Charged twice for Enterprise tier subscription renewal",
+  "message": "Hello, our corporate account was billed $1,499 twice on October 27th for the same renewal invoice #INV-9021. Our finance team noticed this immediately. Please reverse the duplicate charge and update our statement as this is holding up monthly account reconciliation.",
+  "timestamp": "2026-10-28T09:15:00Z",
+  "metadata": {
+    "plan": "enterprise",
+    "account_age_days": 410,
+    "mrr_usd": 1499,
+    "previous_tickets": 1
+  }
+}
+

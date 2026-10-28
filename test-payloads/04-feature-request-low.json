@@ -1,0 +1,16 @@
+{
+  "customer_id": "CUST-3810",
+  "customer_name": "Devin Wright",
+  "email": "devin@creativedesign.io",
+  "channel": "email_support",
+  "subject": "Suggestion: Would love dark mode support on mobile browser view",
+  "message": "Hey folks, loving the analytics reports so far! Just wanted to share a quick suggestion - when opening dashboard links on Safari mobile at night, the white background is super bright. A toggle for dark mode would be awesome whenever you get a chance to look at it. Keep up the great work!",
+  "timestamp": "2026-10-28T08:22:00Z",
+  "metadata": {
+    "plan": "starter",
+    "account_age_days": 180,
+    "mrr_usd": 49,
+    "previous_tickets": 3
+  }
+}
+

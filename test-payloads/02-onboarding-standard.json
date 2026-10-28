@@ -1,0 +1,16 @@
+{
+  "customer_id": "CUST-9412",
+  "customer_name": "Marcus Chen",
+  "email": "mchen@fintechlabs.co",
+  "channel": "in_app_chat",
+  "subject": "Question regarding SAML SSO configuration with Okta",
+  "message": "Hi Support team! We are currently in the middle of onboarding our 25 team members and trying to configure Okta SAML SSO. Could you share the ACS URL and Entity ID we should use for the staging environment? No rush, looking to wrap this up by Friday.",
+  "timestamp": "2026-10-28T10:02:14Z",
+  "metadata": {
+    "plan": "team",
+    "account_age_days": 12,
+    "mrr_usd": 299,
+    "previous_tickets": 0
+  }
+}
+

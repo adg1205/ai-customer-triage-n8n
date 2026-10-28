@@ -1,0 +1,16 @@
+{
+  "customer_id": "CUST-1049",
+  "customer_name": "Elena Rostova",
+  "email": "erostova@healthpulse.org",
+  "channel": "api_monitoring_alert",
+  "subject": "CRITICAL: Production API throwing 500 errors across all endpoints",
+  "message": "EMERGENCY: Since 11:00 AM UTC, all our client patient check-in sync requests are failing with HTTP 500 Internal Server Error. Patient onboarding is completely halted at 14 regional clinics. This is a severe production outage affecting patient care. We need immediate escalation to senior on-call engineers.",
+  "timestamp": "2026-10-28T11:05:32Z",
+  "metadata": {
+    "plan": "mission_critical_enterprise",
+    "account_age_days": 720,
+    "mrr_usd": 4500,
+    "previous_tickets": 4
+  }
+}
+

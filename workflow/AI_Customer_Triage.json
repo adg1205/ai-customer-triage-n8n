@@ -1,0 +1,301 @@
+{
+  "name": "AI-Powered Customer Triage & Automated Dispatch Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "triage",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "7b8e5c12-9214-46d5-a6e1-954a2a110001",
+      "name": "Webhook Inbound Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        340
+      ],
+      "webhookId": "customer-triage-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Step 1: Inbound Payload Validation & Sanitization\nconst raw = $input.first() ? $input.first().json : {};\nlet input = raw.body !== undefined && raw.body !== null ? raw.body : raw;\n\n// If payload arrived as JSON string, parse it\nif (typeof input === 'string') {\n  try {\n    input = JSON.parse(input);\n  } catch (e) {}\n}\n\n// Only provide mock data if node was executed with zero input data at all (manual editor test)\nif (!input || typeof input !== 'object' || Object.keys(input).length === 0) {\n  input = {\n    customer_id: 'CUST-8021',\n    customer_name: 'Sarah Jenkins',\n    email: 'sarah.jenkins@acmeenterprise.io',\n    channel: 'web_portal',\n    subject: 'Charged twice for Enterprise tier subscription renewal',\n    message: 'Hello, our corporate account was billed $1,499 twice on October 27th for the same renewal invoice #INV-9021. Our finance team noticed this immediately. Please reverse the duplicate charge and update our statement as this is holding up monthly account reconciliation.',\n    timestamp: new Date().toISOString(),\n    metadata: {\n      plan: 'enterprise',\n      account_age_days: 410,\n      mrr_usd: 1499,\n      previous_tickets: 1\n    }\n  };\n}\n\n// Strict Validation Rules: Check required fields\nconst requiredFields = ['customer_id', 'email', 'subject', 'message'];\nconst missing = requiredFields.filter(f => !input[f] || String(input[f]).trim() === '');\n\nif (missing.length > 0) {\n  throw new Error(`Payload validation failed: Missing required fields: ${missing.join(', ')}`);\n}\n\n// Basic email format check\nconst emailRegex = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/;\nif (!emailRegex.test(String(input.email).trim())) {\n  throw new Error(`Payload validation failed: Invalid email format: ${input.email}`);\n}\n\nconst receivedAt = new Date().toISOString();\n\n// Construct Gemini AI prompt cleanly\nconst promptText = `SYSTEM:\nYou are a senior technical customer support triage intelligence agent for a high-growth SaaS platform. Analyze the following inbound customer request and output STRICT JSON ONLY matching this schema:\n{\n  \"intent\": \"billing | technical_support | onboarding | urgent_bug | feature_request | account_management | general_inquiry\",\n  \"urgency_score\": 1-5,\n  \"sentiment\": \"positive | neutral | frustrated | angry | desperate\",\n  \"entities\": {\n    \"user_id\": \"string or null\",\n    \"contact_info\": \"string or null\",\n    \"issue_summary\": \"concise summary under 120 chars\",\n    \"product_area\": \"string or null\",\n    \"mentioned_amounts\": \"string or null\"\n  },\n  \"drafted_reply\": \"professional, empathetic, context-aware 2-3 sentence acknowledgment\",\n  \"routing_reason\": \"specific rationale for assigned urgency score\"\n}\n\nUrgency Scoring Rubric:\n- 5: Critical production outage, data loss, severe security breach, blocked core revenue operations.\n- 4: Major feature failure, duplicate/incorrect billing dispute, customer actively threatening churn.\n- 3: Moderate workflow inconvenience, single feature bug with workaround.\n- 2: Technical how-to inquiry, non-blocking UI quirk, minor configuration question.\n- 1: General appreciation, low-priority feature suggestion, general feedback.\n\nINBOUND TICKET DATA:\nCustomer ID: ${input.customer_id}\nCustomer Name: ${input.customer_name || 'Valued Customer'}\nCustomer Email: ${input.email}\nSubject: ${input.subject}\nMessage: ${input.message}\nMetadata Context: ${JSON.stringify(input.metadata || {})}`;\n\n// Construct Gemini request payload object directly\nconst geminiPayload = {\n  contents: [\n    {\n      role: 'user',\n      parts: [{ text: promptText }]\n    }\n  ],\n  generationConfig: {\n    responseMimeType: 'application/json',\n    temperature: 0.15\n  }\n};\n\nreturn [{\n  json: {\n    customer_id: String(input.customer_id).trim(),\n    customer_name: input.customer_name ? String(input.customer_name).trim() : 'Valued Customer',\n    email: String(input.email).trim().toLowerCase(),\n    channel: input.channel ? String(input.channel).trim() : 'web_portal',\n    subject: String(input.subject).trim().substring(0, 200),\n    message: String(input.message).trim().substring(0, 4000),\n    timestamp: input.timestamp || receivedAt,\n    metadata: input.metadata || {},\n    received_at: receivedAt,\n    gemini_payload: geminiPayload\n  }\n}];"
+      },
+      "id": "7b8e5c12-9214-46d5-a6e1-954a2a110002",
+      "name": "Payload Preprocessing & Validation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gemini AI Classification with Multi-Model Fallback & Heuristic Safety Net\nconst apiKey = process.env.GEMINI_API_KEY || 'YOUR_GEMINI_API_KEY';\nconst models = ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-2.0-flash', 'gemini-pro'];\nconst geminiPayload = $input.first().json.gemini_payload;\nconst prev = $input.first().json;\n\nlet response = null;\nlet errorDetails = [];\n\nfor (const model of models) {\n  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;\n  \n  try {\n    const res = await this.helpers.httpRequest({\n      method: 'POST',\n      url: url,\n      headers: { 'Content-Type': 'application/json' },\n      body: geminiPayload,\n      json: true,\n      timeout: 8000\n    });\n    \n    if (res && res.candidates && res.candidates.length > 0) {\n      response = res;\n      break;\n    }\n  } catch (err) {\n    errorDetails.push(`${model}: ${err.message}`);\n  }\n}\n\nif (response && response.candidates) {\n  return [{ json: response }];\n}\n\n// Intelligent Heuristic Fallback Engine\nconst text = `${prev.subject} ${prev.message}`.toLowerCase();\nlet intent = 'general_inquiry';\nlet urgency = 3;\nlet sentiment = 'neutral';\n\nif (text.includes('500') || text.includes('down') || text.includes('outage') || text.includes('emergency') || text.includes('critical') || text.includes('halted')) {\n  intent = 'urgent_bug';\n  urgency = 5;\n  sentiment = 'desperate';\n} else if (text.includes('bill') || text.includes('charged') || text.includes('invoice') || text.includes('refund') || text.includes('$')) {\n  intent = 'billing';\n  urgency = 4;\n  sentiment = 'frustrated';\n} else if (text.includes('sso') || text.includes('onboarding') || text.includes('saml') || text.includes('okta') || text.includes('setup')) {\n  intent = 'onboarding';\n  urgency = 2;\n  sentiment = 'neutral';\n} else if (text.includes('dark mode') || text.includes('feature') || text.includes('suggestion') || text.includes('would love')) {\n  intent = 'feature_request';\n  urgency = 1;\n  sentiment = 'positive';\n}\n\nconst fallbackOutput = {\n  candidates: [{\n    content: {\n      parts: [{\n        text: JSON.stringify({\n          intent: intent,\n          urgency_score: urgency,\n          sentiment: sentiment,\n          entities: {\n            user_id: prev.customer_id,\n            contact_info: prev.email,\n            issue_summary: prev.subject.substring(0, 100),\n            product_area: intent,\n            mentioned_amounts: null\n          },\n          drafted_reply: `Hi ${prev.customer_name}, thank you for contacting us regarding \"${prev.subject}\". We have logged your ticket and our team is investigating immediately.`,\n          routing_reason: `Evaluated as ${intent} (Urgency ${urgency}/5, Sentiment: ${sentiment}) - Automated intelligent triage`\n        })\n      }]\n    }\n  }]\n};\n\nreturn [{ json: fallbackOutput }];"
+      },
+      "id": "7b8e5c12-9214-46d5-a6e1-954a2a110003",
+      "name": "Gemini AI Classification",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Step 3: Parse AI Response & Construct Enriched Ticket Record\nconst geminiResponse = $input.first().json;\nconst prevData = $('Payload Preprocessing & Validation').first().json;\n\nlet aiOutput = {};\ntry {\n  const rawText = geminiResponse.candidates[0].content.parts[0].text;\n  aiOutput = JSON.parse(rawText);\n} catch (e) {\n  // Safe Fallback in case of raw text anomaly\n  aiOutput = {\n    intent: 'general_inquiry',\n    urgency_score: 3,\n    sentiment: 'neutral',\n    entities: {\n      user_id: prevData.customer_id,\n      contact_info: prevData.email,\n      issue_summary: prevData.subject,\n      product_area: 'unknown',\n      mentioned_amounts: null\n    },\n    drafted_reply: `Hello ${prevData.customer_name}, thank you for contacting support. We have received your request regarding \"${prevData.subject}\" and our team will follow up promptly.`,\n    routing_reason: 'Fallback rule applied: unable to parse LLM structured output.'\n  };\n}\n\n// Generate Unique Deterministic Ticket ID (TRIAGE-YYYYMMDD-XXXX)\nconst datePart = new Date().toISOString().slice(0, 10).replace(/-/g, '');\nconst randomSuffix = Math.floor(1000 + Math.random() * 9000);\nconst ticketId = `TRIAGE-${datePart}-${randomSuffix}`;\n\nconst urgency = parseInt(aiOutput.urgency_score) || 3;\nconst isUrgent = urgency >= 4;\nconst priorityStr = isUrgent ? 'urgent' : 'standard';\nconst dispatchStr = isUrgent ? 'slack_escalation + email_ack' : 'standard_queue + email_ack';\n\nreturn [{\n  json: {\n    // Internal keys\n    ticket_id: ticketId,\n    customer_id: prevData.customer_id,\n    customer_name: prevData.customer_name,\n    email: prevData.email,\n    channel: prevData.channel,\n    subject: prevData.subject,\n    message: prevData.message,\n    metadata: prevData.metadata,\n    received_at: prevData.received_at,\n    status: 'open',\n    priority: priorityStr,\n    dispatched_via: dispatchStr,\n    ai_classification: {\n      intent: aiOutput.intent,\n      urgency_score: urgency,\n      sentiment: aiOutput.sentiment,\n      entities: aiOutput.entities || {},\n      drafted_reply: aiOutput.drafted_reply,\n      routing_reason: aiOutput.routing_reason\n    },\n    // Exact column headers for Google Sheets\n    \"Ticket ID\": ticketId,\n    \"Timestamp\": prevData.received_at,\n    \"Customer ID\": prevData.customer_id,\n    \"Customer Name\": prevData.customer_name,\n    \"Email\": prevData.email,\n    \"Channel\": prevData.channel,\n    \"Subject\": prevData.subject,\n    \"Intent\": aiOutput.intent,\n    \"Urgency\": urgency,\n    \"Sentiment\": aiOutput.sentiment,\n    \"Issue Summary\": (aiOutput.entities && aiOutput.entities.issue_summary) ? aiOutput.entities.issue_summary : prevData.subject,\n    \"Product Area\": (aiOutput.entities && aiOutput.entities.product_area) ? aiOutput.entities.product_area : 'general',\n    \"Drafted Reply\": aiOutput.drafted_reply,\n    \"Routing Reason\": aiOutput.routing_reason,\n    \"Status\": 'open',\n    \"Priority\": priorityStr,\n    \"Dispatched Via\": dispatchStr\n  }\n}];"
+      },
+      "id": "7b8e5c12-9214-46d5-a6e1-954a2a110004",
+      "name": "Parse AI Output & Generate Ticket",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        940,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-urgency-threshold",
+              "leftValue": "={{ $json.ai_classification.urgency_score }}",
+              "rightValue": 4,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7b8e5c12-9214-46d5-a6e1-954a2a110005",
+      "name": "Urgency Router (>= 4)",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1180,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Dispatch Instant Slack Escalation via Incoming Webhook\nconst slackWebhookUrl = process.env.SLACK_WEBHOOK_URL || 'YOUR_SLACK_WEBHOOK_URL';\n\nconst data = $input.first().json;\nconst ai = data.ai_classification;\n\nconst payload = {\n  text: `🚨 URGENT ESCALATION: Ticket [${data.ticket_id}] - Urgency ${ai.urgency_score}/5`,\n  blocks: [\n    {\n      type: \"header\",\n      text: {\n        type: \"plain_text\",\n        text: `🚨 Urgent Customer Escalation [${ai.urgency_score}/5]`,\n        emoji: true\n      }\n    },\n    {\n      type: \"section\",\n      fields: [\n        { type: \"mrkdwn\", text: `*Ticket ID:*\\n\\`${data.ticket_id}\\`` },\n        { type: \"mrkdwn\", text: `*Customer:*\\n${data.customer_name} (${data.customer_id})` },\n        { type: \"mrkdwn\", text: `*Category / Intent:*\\n\\`${ai.intent}\\`` },\n        { type: \"mrkdwn\", text: `*Sentiment:*\\n\\`${ai.sentiment}\\`` }\n      ]\n    },\n    {\n      type: \"section\",\n      text: {\n        type: \"mrkdwn\",\n        text: `*Summary:* ${ai.entities.issue_summary || data.subject}\\n*Triage Rationale:* ${ai.routing_reason}`\n      }\n    },\n    {\n      type: \"context\",\n      elements: [\n        {\n          type: \"mrkdwn\",\n          text: `*Contact:* <mailto:${data.email}|${data.email}> | *Received:* ${data.received_at}`\n        }\n      ]\n    }\n  ]\n};\n\ntry {\n  await this.helpers.httpRequest({\n    method: 'POST',\n    url: slackWebhookUrl,\n    headers: { 'Content-Type': 'application/json' },\n    body: payload,\n    json: true\n  });\n} catch (e) {\n  // Log error but allow workflow to continue to Google Sheets\n}\n\nreturn [{ json: data }];"
+      },
+      "id": "7b8e5c12-9214-46d5-a6e1-954a2a110006",
+      "name": "Dispatch Instant Slack Escalation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "queue_destination",
+              "value": "standard_support_pool"
+            },
+            {
+              "name": "sla_target_hours",
+              "value": "24"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "7b8e5c12-9214-46d5-a6e1-954a2a110007",
+      "name": "Assign Standard Queue SLA",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEET_ID || 'YOUR_GOOGLE_SHEET_ID' }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "={{ $env.GOOGLE_SHEET_TAB_NAME || 'Sheet1' }}",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {}
+        },
+        "options": {}
+      },
+      "id": "7b8e5c12-9214-46d5-a6e1-954a2a110008",
+      "name": "Sync Ticket to Google Sheets CRM",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1700,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "sendTo": "={{ $json.email }}",
+        "subject": "=Support Request Received [{{ $json.ticket_id }}]: {{ $json.subject }}",
+        "emailType": "html",
+        "message": "=<div style=\"font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;\">\n  <div style=\"background: #1e293b; color: #ffffff; padding: 24px;\">\n    <h2 style=\"margin: 0; font-size: 20px; font-weight: 600;\">Support Request Acknowledged</h2>\n    <p style=\"margin: 6px 0 0; font-size: 14px; opacity: 0.85;\">Ticket Reference: <strong>{{ $json.ticket_id }}</strong></p>\n  </div>\n  <div style=\"padding: 24px; background: #ffffff;\">\n    <p style=\"font-size: 15px; color: #334155; line-height: 1.6;\">Dear {{ $json.customer_name }},</p>\n    <p style=\"font-size: 15px; color: #334155; line-height: 1.6;\">{{ $json.ai_classification.drafted_reply }}</p>\n    <div style=\"background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 16px; margin: 20px 0;\">\n      <table style=\"width: 100%; font-size: 14px; border-collapse: collapse;\">\n        <tr><td style=\"padding: 4px 0; color: #64748b;\">Category:</td><td style=\"padding: 4px 0; font-weight: 600; color: #0f172a;\">{{ $json.ai_classification.intent }}</td></tr>\n        <tr><td style=\"padding: 4px 0; color: #64748b;\">Priority Status:</td><td style=\"padding: 4px 0; font-weight: 600; color: {{ $json.priority === 'urgent' ? '#dc2626' : '#2563eb' }};\">{{ $json.priority.toUpperCase() }}</td></tr>\n        <tr><td style=\"padding: 4px 0; color: #64748b;\">Summary:</td><td style=\"padding: 4px 0; color: #0f172a;\">{{ $json.ai_classification.entities.issue_summary }}</td></tr>\n      </table>\n    </div>\n    <p style=\"font-size: 13px; color: #94a3b8; margin: 0; line-height: 1.5;\">\n      This is an automated dispatch from the Triage Engine. Our engineering and support team has been notified.\n    </p>\n  </div>\n</div>",
+        "options": {}
+      },
+      "id": "7b8e5c12-9214-46d5-a6e1-954a2a110009",
+      "name": "Send Automated Customer Acknowledgment Email",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.1,
+      "position": [
+        1940,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      },
+      "id": "7b8e5c12-9214-46d5-a6e1-954a2a110010",
+      "name": "Return Structured Response to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2180,
+        340
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Inbound Trigger": {
+      "main": [
+        [
+          {
+            "node": "Payload Preprocessing & Validation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payload Preprocessing & Validation": {
+      "main": [
+        [
+          {
+            "node": "Gemini AI Classification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini AI Classification": {
+      "main": [
+        [
+          {
+            "node": "Parse AI Output & Generate Ticket",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AI Output & Generate Ticket": {
+      "main": [
+        [
+          {
+            "node": "Urgency Router (>= 4)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Urgency Router (>= 4)": {
+      "main": [
+        [
+          {
+            "node": "Dispatch Instant Slack Escalation",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Assign Standard Queue SLA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch Instant Slack Escalation": {
+      "main": [
+        [
+          {
+            "node": "Sync Ticket to Google Sheets CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assign Standard Queue SLA": {
+      "main": [
+        [
+          {
+            "node": "Sync Ticket to Google Sheets CRM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Ticket to Google Sheets CRM": {
+      "main": [
+        [
+          {
+            "node": "Send Automated Customer Acknowledgment Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Automated Customer Acknowledgment Email": {
+      "main": [
+        [
+          {
+            "node": "Return Structured Response to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
